@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Bridge",
+  "version": "1.0.0",
+  "description": "Transfer playlists between Spotify and YouTube",
+  "permissions": [
+    "identity",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.spotify.com/*",
+    "https://accounts.spotify.com/*",
+    "https://www.googleapis.com/*",
+    "https://*.googleapis.com/*",
+    "https://*.firebaseio.com/*",
+    "https://*.google.com/*",
+    "https://www.gstatic.com/*"
+  ],
+  "oauth2": {
+    "client_id": "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/youtube",
+      "https://www.googleapis.com/auth/youtube.force-ssl"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' https://www.gstatic.com; object-src 'self'"
+  }
+}
