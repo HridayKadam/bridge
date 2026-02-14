@@ -78,16 +78,27 @@ const Spotify = (function () {
     };
 
     const authURL = Utils.buildURL(SPOTIFY_AUTH_URL, authParams);
+    console.log('Spotify Auth URL:', authURL);
+    console.log('Redirect URL:', redirectUrl);
 
     return new Promise((resolve, reject) => {
       chrome.identity.launchWebAuthFlow(
         { url: authURL, interactive: true },
         async (redirectUrlResult) => {
+          console.log('Auth flow result:', redirectUrlResult);
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message || 'Spotify login failed'));
+            const errMsg = chrome.runtime.lastError.message || 'Authorization page could not be loaded';
+            console.error('Runtime error message:', errMsg);
+            reject(new Error(errMsg));
             return;
           }
-          if (!redirectUrlResult || !redirectUrlResult.includes('code=')) {
+          if (!redirectUrlResult) {
+            console.error('No redirect URL result');
+            reject(new Error('No redirect URL - check Spotify redirect URI in app settings'));
+            return;
+          }
+          if (!redirectUrlResult.includes('code=')) {
+            console.error('No code in redirect URL:', redirectUrlResult);
             reject(new Error('No authorization code in redirect'));
             return;
           }
