@@ -172,6 +172,16 @@ const Spotify = (function () {
     });
     const text = await res.text();
     if (!res.ok) {
+      if (res.status === 403) {
+        let hint = 'Log out of Spotify in Bridge and log in again to refresh permissions.';
+        try {
+          const err = text ? JSON.parse(text) : {};
+          if (err.error && err.error.message) {
+            hint += ' If the app is in Development Mode, add your Spotify account in Dashboard → your app → Settings → User Management.';
+          }
+        } catch (_) {}
+        throw new Error('Spotify returned Forbidden (403). ' + hint);
+      }
       throw new Error(text || 'Spotify API error');
     }
     return text ? JSON.parse(text) : null;
@@ -226,6 +236,20 @@ const Spotify = (function () {
   }
 
   /**
+   * Create a new playlist.
+   * @param {string} accessToken
+   * @param {string} name - Playlist name
+   * @returns {Promise<string>} - New playlist id
+   */
+  async function createPlaylist(accessToken, name) {
+    const data = await api(accessToken, '/me/playlists', {
+      method: 'POST',
+      body: JSON.stringify({ name: name || 'Untitled', public: false })
+    });
+    return data && data.id ? data.id : null;
+  }
+
+  /**
    * Add tracks to a Spotify playlist.
    * @param {string} accessToken
    * @param {string} playlistId
@@ -272,6 +296,7 @@ const Spotify = (function () {
     api,
     getPlaylists,
     getPlaylistTracks,
+    createPlaylist,
     addTracksToPlaylist,
     getPlaylistTrackIds
   };

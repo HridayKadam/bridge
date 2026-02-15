@@ -1,20 +1,21 @@
 /**
  * Bridge - Popup UI logic
- * Orchestrates login, playlist loading, and transfer with progress.
+ * Single flow: pick source platform + playlist(s), destination platform + playlist, transfer.
+ * Spotify↔Spotify and YouTube↔YouTube are not allowed.
  */
 
 (function () {
   'use strict';
 
   const $ = (id) => document.getElementById(id);
+  const PLATFORM = { SPOTIFY: 'spotify', YOUTUBE: 'youtube' };
 
-  const SOURCE = { SPOTIFY: 'spotify', YOUTUBE: 'youtube' };
   let spotifyToken = null;
   let youtubeToken = null;
   let spotifyPlaylists = [];
   let youtubePlaylists = [];
-  let sourceKind = null;
-  let destKind = null;
+  let sourcePlatform = '';
+  let destPlatform = '';
 
   function send(type, payload = {}) {
     return new Promise((resolve, reject) => {
@@ -111,7 +112,9 @@
       const r = await send('SPOTIFY_LOGIN', { clientId });
       spotifyToken = r.token;
       updateAuthUI();
-      await loadSpotifyPlaylists();
+      await loadSpotifyPlaylistsSafe();
+      refreshSourceAndDestPlaylists();
+      updateValidationAndTransfer();
     } catch (e) {
       $('spotify-status').textContent = 'Login failed';
       $('spotify-status').classList.add('error');
@@ -124,9 +127,8 @@
     spotifyToken = null;
     spotifyPlaylists = [];
     updateAuthUI();
-    fillSelect($('source-playlist'), [], 'Select source');
-    fillSelect($('dest-playlist'), [], 'Select destination');
-    updateTransferButtons();
+    refreshSourceAndDestPlaylists();
+    updateValidationAndTransfer();
   }
 
   async function youtubeLogin() {
@@ -135,7 +137,9 @@
       const r = await send('YOUTUBE_TOKEN');
       youtubeToken = r.token;
       updateAuthUI();
-      await loadYoutubePlaylists();
+      await loadYoutubePlaylistsSafe();
+      refreshSourceAndDestPlaylists();
+      updateValidationAndTransfer();
     } catch (e) {
       $('youtube-status').textContent = 'Login failed';
       $('youtube-status').classList.add('error');
@@ -148,17 +152,53 @@
     youtubeToken = null;
     youtubePlaylists = [];
     updateAuthUI();
-    fillSelect($('source-playlist'), [], 'Select source');
-    fillSelect($('dest-playlist'), [], 'Select destination');
-    updateTransferButtons();
+    refreshSourceAndDestPlaylists();
+    updateValidationAndTransfer();
   }
 
-  function fillSelect(selectEl, items, placeholder, valueKey = 'id', labelKey = 'name') {
+  async function loadSpotifyPlaylistsSafe() {
+    if (!spotifyToken) return;
+    try {
+      const r = await send('SPOTIFY_PLAYLISTS', { token: spotifyToken });
+      spotifyPlaylists = r.playlists || [];
+    } catch (e) {
+      spotifyPlaylists = [];
+      showMessage('Failed to load Spotify playlists: ' + (e.message || 'Unknown error'), true);
+    }
+  }
+
+  async function loadYoutubePlaylistsSafe() {
+    if (!youtubeToken) return;
+    try {
+      const r = await send('YOUTUBE_PLAYLISTS', { token: youtubeToken });
+      youtubePlaylists = r.playlists || [];
+    } catch (e) {
+      youtubePlaylists = [];
+      const msg = (e && e.message) || '';
+      const isHtml = /<\s*html|<!DOCTYPE/i.test(msg);
+      showMessage('Failed to load YouTube playlists.' + (isHtml ? ' Check that YouTube Data API v3 is enabled.' : ' ' + msg), true);
+    }
+  }
+
+  function getSourcePlaylists() {
+    if (sourcePlatform === PLATFORM.SPOTIFY) return spotifyPlaylists;
+    if (sourcePlatform === PLATFORM.YOUTUBE) return youtubePlaylists;
+    return [];
+  }
+
+  function getSourcePlaylistName(playlistId) {
+    const list = getSourcePlaylists();
+    const p = list.find((x) => x.id === playlistId);
+    return (p && p.name) ? p.name : 'Playlist';
+  }
+
+  function fillSelectSingle(selectEl, items, placeholder, valueKey = 'id', labelKey = 'name', emptyPlaceholder = 'No playlists found') {
     const current = selectEl.value;
     selectEl.innerHTML = '';
     const opt0 = document.createElement('option');
     opt0.value = '';
-    opt0.textContent = placeholder;
+    opt0.textContent = items.length === 0 ? emptyPlaceholder : placeholder;
+    if (items.length === 0) opt0.disabled = true;
     selectEl.appendChild(opt0);
     for (const it of items) {
       const opt = document.createElement('option');
@@ -171,228 +211,216 @@
     }
   }
 
-  async function loadSpotifyPlaylists() {
-    if (!spotifyToken) return;
-    try {
-      const r = await send('SPOTIFY_PLAYLISTS', { token: spotifyToken });
-      spotifyPlaylists = r.playlists || [];
-    } catch (_) {
-      spotifyPlaylists = [];
+  function fillSelectMulti(selectEl, items, valueKey = 'id', labelKey = 'name', emptyPlaceholder = 'No playlists found') {
+    const selected = Array.from(selectEl.selectedOptions).map((o) => o.value);
+    selectEl.innerHTML = '';
+    if (items.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = emptyPlaceholder;
+      opt.disabled = true;
+      selectEl.appendChild(opt);
+    } else {
+      for (const it of items) {
+        const opt = document.createElement('option');
+        opt.value = it[valueKey];
+        opt.textContent = it[labelKey] || it[valueKey];
+        opt.selected = selected.includes(it[valueKey]);
+        selectEl.appendChild(opt);
+      }
     }
   }
 
-  async function loadYoutubePlaylists() {
-    if (!youtubeToken) return;
-    try {
-      const r = await send('YOUTUBE_PLAYLISTS', { token: youtubeToken });
-      youtubePlaylists = r.playlists || [];
-    } catch (_) {
-      youtubePlaylists = [];
+  function getSelectedSourcePlaylistIds() {
+    const select = $('source-playlist');
+    return Array.from(select.selectedOptions)
+      .map((o) => o.value)
+      .filter(Boolean);
+  }
+
+  function showValidation(msg) {
+    const el = $('validation-msg');
+    el.textContent = msg || '';
+    el.className = 'validation-msg ' + (msg ? 'error' : '');
+    el.classList.toggle('hidden', !msg);
+  }
+
+  function updateValidationAndTransfer() {
+    sourcePlatform = ($('source-platform').value || '').trim();
+    destPlatform = ($('dest-platform').value || '').trim();
+    const samePlatform = sourcePlatform && destPlatform && sourcePlatform === destPlatform;
+    if (samePlatform) {
+      showValidation('Source and destination must be different (e.g. Spotify → YouTube or YouTube → Spotify).');
+      $('transfer-btn').disabled = true;
+      return;
     }
+    showValidation('');
+
+    const hasSourceToken = sourcePlatform === PLATFORM.SPOTIFY ? spotifyToken : sourcePlatform === PLATFORM.YOUTUBE ? youtubeToken : false;
+    const hasDestToken = destPlatform === PLATFORM.SPOTIFY ? spotifyToken : destPlatform === PLATFORM.YOUTUBE ? youtubeToken : false;
+    const sourceIds = getSelectedSourcePlaylistIds();
+
+    const canTransfer =
+      sourcePlatform &&
+      destPlatform &&
+      !samePlatform &&
+      hasSourceToken &&
+      hasDestToken &&
+      sourceIds.length > 0;
+    $('transfer-btn').disabled = !canTransfer;
   }
 
-  function getSourcePlaylistSelect() {
-    return sourceKind === SOURCE.SPOTIFY ? spotifyPlaylists : youtubePlaylists;
-  }
-
-  function getDestPlaylistSelect() {
-    return destKind === SOURCE.SPOTIFY ? spotifyPlaylists : youtubePlaylists;
-  }
-
-  function onSourcePlaylistChange() {
-    const id = $('source-playlist').value;
-    const platform = sourceKind === SOURCE.SPOTIFY ? 'Spotify' : 'YouTube';
-    $('source-platform').textContent = id ? platform : '';
-    updateTransferButtons();
-  }
-
-  function onDestPlaylistChange() {
-    const id = $('dest-playlist').value;
-    const platform = destKind === SOURCE.SPOTIFY ? 'Spotify' : 'YouTube';
-    $('dest-platform').textContent = id ? platform : '';
-    updateTransferButtons();
-  }
-
-  function setDirection(isSpotifyToYoutube) {
-    sourceKind = isSpotifyToYoutube ? SOURCE.SPOTIFY : SOURCE.YOUTUBE;
-    destKind = isSpotifyToYoutube ? SOURCE.YOUTUBE : SOURCE.SPOTIFY;
-    fillSelect($('source-playlist'), getSourcePlaylistSelect(), 'Select source');
-    fillSelect($('dest-playlist'), getDestPlaylistSelect(), 'Select destination');
-    $('source-platform').textContent = '';
-    $('dest-platform').textContent = '';
-    $('dir-spotify-youtube').classList.toggle('active', isSpotifyToYoutube);
-    $('dir-youtube-spotify').classList.toggle('active', !isSpotifyToYoutube);
-    updateTransferButtons();
-  }
-
-  function updateTransferButtons() {
-    const srcId = $('source-playlist').value;
-    const destId = $('dest-playlist').value;
-    const hasSrc = !!srcId;
-    const hasDest = !!destId;
-    $('transfer-spotify-to-youtube').disabled = !(hasSrc && hasDest && sourceKind === SOURCE.SPOTIFY && destKind === SOURCE.YOUTUBE);
-    $('transfer-youtube-to-spotify').disabled = !(hasSrc && hasDest && sourceKind === SOURCE.YOUTUBE && destKind === SOURCE.SPOTIFY);
-  }
-
-  async function ensurePlaylistsLoaded() {
-    if (sourceKind === SOURCE.SPOTIFY && spotifyPlaylists.length === 0 && spotifyToken) {
-      await loadSpotifyPlaylists();
-      fillSelect($('source-playlist'), spotifyPlaylists, 'Select source');
+  function refreshSourceAndDestPlaylists() {
+    const srcList = getSourcePlaylists();
+    if (sourcePlatform === PLATFORM.SPOTIFY || sourcePlatform === PLATFORM.YOUTUBE) {
+      fillSelectMulti($('source-playlist'), srcList, 'id', 'name', 'No playlists found');
+      $('source-empty-msg').classList.toggle('hidden', srcList.length > 0);
+    } else {
+      fillSelectMulti($('source-playlist'), [], 'id', 'name', 'Select platform first');
+      $('source-empty-msg').classList.add('hidden');
     }
-    if (sourceKind === SOURCE.YOUTUBE && youtubePlaylists.length === 0 && youtubeToken) {
-      await loadYoutubePlaylists();
-      fillSelect($('source-playlist'), youtubePlaylists, 'Select source');
-    }
-    if (destKind === SOURCE.SPOTIFY && spotifyPlaylists.length === 0 && spotifyToken) {
-      await loadSpotifyPlaylists();
-      fillSelect($('dest-playlist'), spotifyPlaylists, 'Select destination');
-    }
-    if (destKind === SOURCE.YOUTUBE && youtubePlaylists.length === 0 && youtubeToken) {
-      await loadYoutubePlaylists();
-      fillSelect($('dest-playlist'), youtubePlaylists, 'Select destination');
-    }
+    $('source-playlist').disabled = !sourcePlatform || (sourcePlatform === PLATFORM.SPOTIFY && !spotifyToken) || (sourcePlatform === PLATFORM.YOUTUBE && !youtubeToken);
+    updateValidationAndTransfer();
   }
 
-  async function transferSpotifyToYoutube() {
-    const srcId = $('source-playlist').value;
-    const destId = $('dest-playlist').value;
-    if (!srcId || !destId || !spotifyToken || !youtubeToken) return;
-    await ensurePlaylistsLoaded();
-    await runTransfer({
-      sourceKind: SOURCE.SPOTIFY,
-      destKind: SOURCE.YOUTUBE,
-      sourcePlaylistId: srcId,
-      destPlaylistId: destId,
-      sourcePlaylistName: spotifyPlaylists.find((p) => p.id === srcId)?.name || 'Playlist',
-      destPlaylistName: youtubePlaylists.find((p) => p.id === destId)?.name || 'Playlist'
-    });
+  async function onSourcePlatformChange() {
+    sourcePlatform = ($('source-platform').value || '').trim();
+    $('source-playlist').disabled = !sourcePlatform || (sourcePlatform === PLATFORM.SPOTIFY && !spotifyToken) || (sourcePlatform === PLATFORM.YOUTUBE && !youtubeToken);
+    if (sourcePlatform === PLATFORM.SPOTIFY && spotifyPlaylists.length === 0 && spotifyToken) {
+      fillSelectMulti($('source-playlist'), [], 'id', 'name');
+      $('source-empty-msg').classList.add('hidden');
+      await loadSpotifyPlaylistsSafe();
+    } else if (sourcePlatform === PLATFORM.YOUTUBE && youtubePlaylists.length === 0 && youtubeToken) {
+      fillSelectMulti($('source-playlist'), [], 'id', 'name');
+      $('source-empty-msg').classList.add('hidden');
+      await loadYoutubePlaylistsSafe();
+    }
+    refreshSourceAndDestPlaylists();
   }
 
-  async function transferYouTubeToSpotify() {
-    const srcId = $('source-playlist').value;
-    const destId = $('dest-playlist').value;
-    if (!srcId || !destId || !spotifyToken || !youtubeToken) return;
-    await ensurePlaylistsLoaded();
-    await runTransfer({
-      sourceKind: SOURCE.YOUTUBE,
-      destKind: SOURCE.SPOTIFY,
-      sourcePlaylistId: srcId,
-      destPlaylistId: destId,
-      sourcePlaylistName: youtubePlaylists.find((p) => p.id === srcId)?.name || 'Playlist',
-      destPlaylistName: spotifyPlaylists.find((p) => p.id === destId)?.name || 'Playlist'
-    });
+  function onDestPlatformChange() {
+    destPlatform = ($('dest-platform').value || '').trim();
+    updateValidationAndTransfer();
   }
 
-  async function runTransfer(opts) {
-    const { sourceKind: sk, destKind: dk, sourcePlaylistId, destPlaylistId, sourcePlaylistName } = opts;
+  async function doTransfer() {
+    const srcIds = getSelectedSourcePlaylistIds();
+    if (!srcIds.length || sourcePlatform === destPlatform) return;
     hideMessage();
-    setProgress(true, 0, '0 / 0');
+    showValidation('');
 
-    let tracks = [];
+    const queryForTrack = (t) => `${t.title} ${t.artist} official audio`.trim() || 'music';
+    let totalTransferred = 0;
+    let totalFailed = 0;
+    const playlistCount = srcIds.length;
+
     try {
-      if (sk === SOURCE.SPOTIFY) {
-        const r = await send('SPOTIFY_PLAYLIST_TRACKS', { token: spotifyToken, playlistId: sourcePlaylistId });
-        tracks = (r.tracks || []).map((t) => ({ title: t.title, artist: t.artist, id: t.id }));
+      for (let pIndex = 0; pIndex < srcIds.length; pIndex++) {
+        const playlistId = srcIds[pIndex];
+        const playlistName = getSourcePlaylistName(playlistId);
+
+        let tracks = [];
+        if (sourcePlatform === PLATFORM.SPOTIFY) {
+          const r = await send('SPOTIFY_PLAYLIST_TRACKS', { token: spotifyToken, playlistId });
+          tracks = (r.tracks || []).map((t) => ({ title: t.title, artist: t.artist, id: t.id }));
+        } else {
+          const r = await send('YOUTUBE_PLAYLIST_TRACKS', { token: youtubeToken, playlistId });
+          tracks = (r.tracks || []).map((t) => ({ title: t.title, artist: t.artist, id: t.videoId }));
+        }
+
+        if (tracks.length === 0) {
+          totalFailed += 1;
+          continue;
+        }
+
+        let destPlaylistId;
+        if (destPlatform === PLATFORM.SPOTIFY) {
+          const r = await send('SPOTIFY_CREATE_PLAYLIST', { token: spotifyToken, name: playlistName });
+          destPlaylistId = r.playlistId;
+        } else {
+          destPlaylistId = await send('YOUTUBE_CREATE_PLAYLIST', { token: youtubeToken, title: playlistName }).then((r) => r.playlistId);
+        }
+        if (!destPlaylistId) {
+          showMessage('Failed to create destination playlist: ' + playlistName, true);
+          setProgress(false);
+          return;
+        }
+
+        const total = tracks.length;
+        let transferred = 0;
+        let failed = 0;
+        const existingIds = new Set();
+
+        for (let i = 0; i < tracks.length; i++) {
+          const t = tracks[i];
+          const progressLabel = playlistCount > 1 ? `Playlist ${pIndex + 1}/${playlistCount}: ${i + 1}/${total}` : `${i + 1} / ${total}`;
+          setProgress(true, ((pIndex * 100 + ((i + 1) / total) * 100) / playlistCount), progressLabel);
+
+          if (destPlatform === PLATFORM.YOUTUBE) {
+            const query = queryForTrack(t);
+            try {
+              const r = await send('YOUTUBE_SEARCH', { token: youtubeToken, query });
+              const videoIdToAdd = r.result && r.result.videoId;
+              if (!videoIdToAdd) {
+                failed++;
+                continue;
+              }
+              if (existingIds.has(videoIdToAdd)) {
+                transferred++;
+                continue;
+              }
+              await send('YOUTUBE_ADD_ITEM', { token: youtubeToken, playlistId: destPlaylistId, videoId: videoIdToAdd });
+              existingIds.add(videoIdToAdd);
+              transferred++;
+            } catch (_) {
+              failed++;
+            }
+          } else {
+            const query = queryForTrack(t);
+            try {
+              const res = await fetch('https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(query) + '&limit=1', {
+                headers: { Authorization: 'Bearer ' + spotifyToken }
+              });
+              const data = await res.json().catch(() => ({}));
+              const item = data.tracks && data.tracks.items && data.tracks.items[0];
+              const trackId = item && item.id;
+              const trackUri = item && item.uri;
+              if (trackId && existingIds.has(trackId)) {
+                transferred++;
+                continue;
+              }
+              if (trackUri) {
+                await send('SPOTIFY_ADD_TRACKS', { token: spotifyToken, playlistId: destPlaylistId, uris: [trackUri] });
+                existingIds.add(trackId);
+                transferred++;
+              } else {
+                failed++;
+              }
+            } catch (_) {
+              failed++;
+            }
+          }
+        }
+        totalTransferred += transferred;
+        totalFailed += failed;
+      }
+
+      setProgress(false);
+      if (totalFailed === 0) {
+        showMessage(playlistCount > 1 ? `Done. ${playlistCount} playlist(s) created, ${totalTransferred} track(s) transferred.` : `Done. "${getSourcePlaylistName(srcIds[0])}" created with ${totalTransferred} track(s).`);
       } else {
-        const r = await send('YOUTUBE_PLAYLIST_TRACKS', { token: youtubeToken, playlistId: sourcePlaylistId });
-        tracks = (r.tracks || []).map((t) => ({ title: t.title, artist: t.artist, id: t.videoId }));
+        showMessage(`Done. ${totalTransferred} transferred, ${totalFailed} failed.`, true);
       }
     } catch (e) {
       setProgress(false);
-      showMessage('Failed to load source playlist: ' + (e.message || ''), true);
-      return;
-    }
-
-    const total = tracks.length;
-    if (total === 0) {
-      setProgress(false);
-      showMessage('No tracks in source playlist.', true);
-      return;
-    }
-
-    let existingIds = new Set();
-    try {
-      if (dk === SOURCE.SPOTIFY) {
-        const r = await send('SPOTIFY_PLAYLIST_IDS', { token: spotifyToken, playlistId: destPlaylistId });
-        existingIds = new Set(r.ids || []);
+      const msg = (e && e.message) || 'Unknown error';
+      const isHtml = /<\s*html|<!DOCTYPE/i.test(msg);
+      const is403 = /403|Forbidden/i.test(msg);
+      if (is403) {
+        showMessage(msg, true);
       } else {
-        const r = await send('YOUTUBE_PLAYLIST_VIDEO_IDS', { token: youtubeToken, playlistId: destPlaylistId });
-        existingIds = new Set(r.ids || []);
+        showMessage('Transfer failed: ' + (isHtml ? 'Check your connection and try again.' : msg), true);
       }
-    } catch (_) {
-      existingIds = new Set();
-    }
-
-    let transferred = 0;
-    let failed = 0;
-    const queryForTrack = (t) => `${t.title} ${t.artist} official audio`.trim() || 'music';
-
-    for (let i = 0; i < tracks.length; i++) {
-      const t = tracks[i];
-      setProgress(true, ((i + 1) / total) * 100, `${i + 1} / ${total}`);
-
-      if (dk === SOURCE.YOUTUBE) {
-        const query = queryForTrack(t);
-        try {
-          const r = await send('YOUTUBE_SEARCH', { token: youtubeToken, query });
-          const videoIdToAdd = r.result && r.result.videoId;
-          if (!videoIdToAdd) {
-            failed++;
-            continue;
-          }
-          if (existingIds.has(videoIdToAdd)) {
-            transferred++;
-            continue;
-          }
-          await send('YOUTUBE_ADD_ITEM', { token: youtubeToken, playlistId: destPlaylistId, videoId: videoIdToAdd });
-          existingIds.add(videoIdToAdd);
-          transferred++;
-        } catch (_) {
-          failed++;
-        }
-      } else {
-        const query = queryForTrack(t);
-        try {
-          const res = await fetch('https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(query) + '&limit=1', {
-            headers: { Authorization: 'Bearer ' + spotifyToken }
-          });
-          const data = await res.json().catch(() => ({}));
-          const item = data.tracks && data.tracks.items && data.tracks.items[0];
-          const trackId = item && item.id;
-          const trackUri = item && item.uri;
-          if (trackId && existingIds.has(trackId)) {
-            transferred++;
-            continue;
-          }
-          if (trackUri) {
-            await send('SPOTIFY_ADD_TRACKS', { token: spotifyToken, playlistId: destPlaylistId, uris: [trackUri] });
-            existingIds.add(trackId);
-            transferred++;
-          } else {
-            failed++;
-          }
-        } catch (_) {
-          failed++;
-        }
-      }
-    }
-
-    setProgress(false);
-
-    const config = window.BRIDGE_CONFIG || {};
-    if (config.FIREBASE && window.BridgeFirebase) {
-      await window.BridgeFirebase.init(config.FIREBASE);
-      await window.BridgeFirebase.logTransfer({
-        playlistName: sourcePlaylistName,
-        songsTransferred: transferred,
-        direction: sk === SOURCE.SPOTIFY ? 'spotify_to_youtube' : 'youtube_to_spotify'
-      });
-    }
-
-    if (failed === 0) {
-      showMessage(`Done. ${transferred} track(s) transferred.`);
-    } else {
-      showMessage(`Done. ${transferred} transferred, ${failed} failed.`, failed > 0);
     }
   }
 
@@ -401,25 +429,25 @@
     youtubeToken = await loadYoutubeToken();
     updateAuthUI();
 
-    if (spotifyToken) await loadSpotifyPlaylists();
-    if (youtubeToken) await loadYoutubePlaylists();
+    fillSelectMulti($('source-playlist'), [], 'id', 'name', 'Select platform first');
+    $('source-empty-msg').classList.add('hidden');
+    showValidation('');
 
-    setDirection(true);
-    fillSelect($('source-playlist'), spotifyPlaylists, 'Select source');
-    fillSelect($('dest-playlist'), youtubePlaylists, 'Select destination');
+    if (spotifyToken) await loadSpotifyPlaylistsSafe();
+    if (youtubeToken) await loadYoutubePlaylistsSafe();
+
+    refreshSourceAndDestPlaylists();
 
     $('spotify-login').addEventListener('click', spotifyLogin);
     $('spotify-logout').addEventListener('click', spotifyLogout);
     $('youtube-login').addEventListener('click', youtubeLogin);
     $('youtube-logout').addEventListener('click', youtubeLogout);
 
-    $('source-playlist').addEventListener('change', onSourcePlaylistChange);
-    $('dest-playlist').addEventListener('change', onDestPlaylistChange);
+    $('source-platform').addEventListener('change', onSourcePlatformChange);
+    $('dest-platform').addEventListener('change', onDestPlatformChange);
+    $('source-playlist').addEventListener('change', updateValidationAndTransfer);
 
-    $('transfer-spotify-to-youtube').addEventListener('click', transferSpotifyToYoutube);
-    $('transfer-youtube-to-spotify').addEventListener('click', transferYouTubeToSpotify);
-    $('dir-spotify-youtube').addEventListener('click', () => setDirection(true));
-    $('dir-youtube-spotify').addEventListener('click', () => setDirection(false));
+    $('transfer-btn').addEventListener('click', doTransfer);
   }
 
   document.addEventListener('DOMContentLoaded', init);

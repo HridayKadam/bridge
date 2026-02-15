@@ -6,7 +6,7 @@
 importScripts('utils.js', 'spotify.js', 'youtube.js');
 
 const CONFIG = {
-  SPOTIFY_CLIENT_ID: '5502a386fc78420ebec2219f037810aa',
+  SPOTIFY_CLIENT_ID: '05a2f5ae70ee4ea595ac9ad0ffcf65ec',
   GOOGLE_CLIENT_ID: '283462681481-n1u3qv8ghs7qnc6v1bi5aclnoghqa7v7.apps.googleusercontent.com'
 };
 
@@ -62,6 +62,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           }
           const tracks = await self.BridgeSpotify.getPlaylistTracks(token, playlistId);
           sendResponse({ success: true, tracks });
+          return;
+        }
+
+        case 'SPOTIFY_CREATE_PLAYLIST': {
+          const { token, name } = payload || {};
+          if (!token || !name) {
+            sendResponse({ success: false, error: 'Missing params' });
+            return;
+          }
+          const playlistId = await self.BridgeSpotify.createPlaylist(token, name);
+          sendResponse({ success: true, playlistId });
           return;
         }
 

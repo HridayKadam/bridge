@@ -58,6 +58,16 @@ const YouTube = (function () {
     });
     const text = await res.text();
     if (!res.ok) {
+      if (res.status === 403) {
+        let hint = 'Enable YouTube Data API v3 in Google Cloud Console and check quota. Log out of YouTube in Bridge and log in again.';
+        try {
+          const err = text ? JSON.parse(text) : {};
+          const msg = err.error && err.error.message ? err.error.message : '';
+          if (/quota|exceeded/i.test(msg)) hint = 'YouTube quota exceeded. Try again later or check your Google Cloud quota.';
+          else if (/disabled|not enabled/i.test(msg)) hint = 'YouTube Data API v3 is not enabled. Enable it in Google Cloud Console → APIs & Services → Library.';
+        } catch (_) {}
+        throw new Error('YouTube returned Forbidden (403). ' + hint);
+      }
       throw new Error(text || 'YouTube API error');
     }
     return text ? JSON.parse(text) : null;

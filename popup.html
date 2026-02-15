@@ -29,35 +29,35 @@
     </section>
 
     <section class="playlists-section">
-      <div class="direction-selector">
-        <button type="button" id="dir-spotify-youtube" class="btn dir-btn active">Spotify → YouTube</button>
-        <button type="button" id="dir-youtube-spotify" class="btn dir-btn">YouTube → Spotify</button>
+      <div class="playlist-group">
+        <label class="label" for="source-platform">Source</label>
+        <select id="source-platform" class="select select-platform">
+          <option value="">Select platform</option>
+          <option value="spotify">Spotify</option>
+          <option value="youtube">YouTube</option>
+        </select>
       </div>
       <div class="playlist-group">
-        <label class="label" for="source-playlist">Source playlist</label>
-        <select id="source-playlist" class="select" disabled>
+        <label class="label" for="source-playlist">Source playlist(s) <span class="hint">(Ctrl+click to select multiple)</span></label>
+        <select id="source-playlist" class="select select-multi" multiple disabled>
           <option value="">Select source</option>
         </select>
-        <span id="source-platform" class="platform-tag"></span>
+        <span id="source-empty-msg" class="empty-msg hidden">No playlists found</span>
       </div>
       <div class="playlist-group">
-        <label class="label" for="dest-playlist">Destination playlist</label>
-        <select id="dest-playlist" class="select" disabled>
-          <option value="">Select destination</option>
+        <label class="label" for="dest-platform">Destination</label>
+        <select id="dest-platform" class="select select-platform">
+          <option value="">Select platform</option>
+          <option value="spotify">Spotify</option>
+          <option value="youtube">YouTube</option>
         </select>
-        <span id="dest-platform" class="platform-tag"></span>
+        <span class="hint">A new playlist with the same name will be created on the destination.</span>
       </div>
+      <div id="validation-msg" class="validation-msg hidden"></div>
     </section>
 
     <section class="transfer-section">
-      <div class="transfer-buttons">
-        <button type="button" id="transfer-spotify-to-youtube" class="btn btn-accent" disabled>
-          Transfer to YouTube
-        </button>
-        <button type="button" id="transfer-youtube-to-spotify" class="btn btn-accent" disabled>
-          Transfer to Spotify
-        </button>
-      </div>
+      <button type="button" id="transfer-btn" class="btn btn-accent btn-block" disabled>Transfer</button>
       <div id="progress-wrap" class="progress-wrap hidden">
         <div class="progress-bar">
           <div id="progress-fill" class="progress-fill"></div>

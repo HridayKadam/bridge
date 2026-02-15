@@ -29,14 +29,21 @@ Before giving the extension to users, set your API keys once:
 1. **Spotify**
    - [Spotify Dashboard](https://developer.spotify.com/dashboard) → create an app → copy **Client ID**.
    - Put it in **config.js** as `SPOTIFY_CLIENT_ID`.
-   - In the same app, **Edit settings** → **Redirect URIs** → add:  
+   - In the same app, **Edit settings** → **Redirect URIs** → add **exactly** (no path, trailing slash required):  
      `https://<YOUR_EXTENSION_ID>.chromiumapp.org/`  
+     Example for this extension: `https://eppajbfepkbidpdciloobkdipfhbinfl.chromiumapp.org/`  
      (Get the extension ID from `chrome://extensions` after loading the folder once.)
 
-2. **Google / YouTube**
-   - [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → **Create credentials** → **OAuth client ID** → Application type **Chrome extension** → use your extension ID.
-   - Copy the **Client ID** (e.g. `xxx.apps.googleusercontent.com`).
-   - Put it in **manifest.json** under `oauth2.client_id` and in **config.js** as `GOOGLE_CLIENT_ID` (optional; manifest is enough for YouTube).
+2. **Google / YouTube** (required for YouTube login)
+   - [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → select or create a project.
+   - Enable **YouTube Data API v3**: **APIs & Services** → **Library** → search “YouTube Data API v3” → **Enable**.
+   - **Create credentials** → **OAuth client ID**.
+   - If asked, configure the **OAuth consent screen** (e.g. External, add your email as test user).
+   - Application type: **Chrome extension** (not “Web application”).
+   - **Application ID**: your extension ID, e.g. `eppajbfepkbidpdciloobkdipfhbinfl` (from `chrome://extensions`).
+   - Create → copy the **Client ID** (looks like `xxxxx.apps.googleusercontent.com`).
+   - Put it in **manifest.json** under `oauth2.client_id`, and in **config.js** and **background.js** as `GOOGLE_CLIENT_ID`.
+   - Reload the extension after changing the manifest.
 
 3. **Firebase (optional)**
    - If you want transfer analytics, create a project in [Firebase Console](https://console.firebase.google.com), then in **Project settings** copy the config into **config.js** under `FIREBASE`. Create a **Firestore** database; the extension writes to a `transfers` collection.
